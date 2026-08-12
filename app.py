@@ -1,0 +1,108 @@
+"""
+Cafe CMS - Production App (Railway Ready)
+"""
+
+from flask import Flask, render_template
+from config import Config
+from models import CafeDB
+from datetime import datetime
+import base64
+import os
+
+from routes import (
+    main_bp,
+    auth_bp,
+    about_bp,
+    dashboard_bp,
+    settings_bp,
+    menu_bp,
+    gallery_bp,
+    promo_bp,
+    social_bp
+)
+
+
+# ================= CREATE APP =================
+def create_app():
+    app = Flask(__name__)
+
+    # Load config
+    app.config.from_object(Config)
+    Config.init_app(app)
+
+    # Init DB
+    db = CafeDB(app.config['MONGODB_URI'], app.config['MONGODB_DATABASE'])
+    db.create_default_admin()
+    app.db = db
+
+    # ================= FILTER =================
+    @app.template_filter('b64encode')
+    def base64_encode_filter(data):
+        if data is None:
+            return ''
+        if isinstance(data, str):
+            return base64.b64encode(data.encode()).decode()
+        return base64.b64encode(data).decode()
+
+    @app.template_filter('datetimeformat')
+    def datetimeformat_filter(value, format='%d %B %Y'):
+        if not value:
+            return '-'
+        if hasattr(value, 'strftime'):
+            return value.strftime(format)
+        if isinstance(value, str):
+            try:
+                return datetime.strptime(value, '%Y-%m-%d').strftime(format)
+            except:
+                return value
+        return str(value)
+
+    # ================= GLOBAL DATA =================
+    @app.context_processor
+    def inject_globals():
+        return dict(
+            settings=db.get_settings(),
+            social=db.get_social_links()
+        )
+
+    @app.context_processor
+    def inject_now():
+        return {'now': datetime.now}
+
+    # ================= VISITOR =================
+    @app.before_request
+    def log_visitor():
+        from flask import request
+        if request.path.startswith('/static/') or request.path.startswith('/admin'):
+            return
+        db.log_visitor(request.remote_addr)
+
+    # ================= ERROR =================
+    @app.errorhandler(404)
+    def not_found_error(error):
+        return render_template('404.html'), 404
+
+    @app.errorhandler(500)
+    def internal_error(error):
+        return render_template('500.html'), 500
+
+    # ================= ROUTES =================
+    app.register_blueprint(auth_bp, url_prefix='/admin')
+    app.register_blueprint(about_bp, url_prefix='/admin')
+    app.register_blueprint(dashboard_bp, url_prefix='/admin')
+    app.register_blueprint(settings_bp, url_prefix='/admin')
+    app.register_blueprint(menu_bp, url_prefix='/admin')
+    app.register_blueprint(gallery_bp, url_prefix='/admin')
+    app.register_blueprint(promo_bp, url_prefix='/admin')
+    app.register_blueprint(social_bp, url_prefix='/admin')
+    app.register_blueprint(main_bp)
+
+    return app
+
+
+# ================= RUN =================
+app = create_app()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))  # Railway pakai PORT env
+    app.run(host="0.0.0.0", port=port, debug=False)
